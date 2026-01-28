@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduAI Test - Generator Testów</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="module" typeof="babel">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+
+        const { useState, useEffect } = React;
+
+        // --- KONFIGURACJA ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDfLJIcwoFTo-a2cPAcffnzQZeHoEtqKWk",
+            authDomain: "generator-818f2.firebaseapp.com",
+            projectId: "generator-818f2",
+            storageBucket: "generator-818f2.firebasestorage.app",
+            messagingSenderId: "530366296323",
+            appId: "1:530366296323:web:59eb47073ef16c14653936"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = "edu-ai-v1";
+        const geminiApiKey = "AIzaSyBNG53QweHRbNDJhVss1Pag8kGELZobVio"; // Klucz API
+
+        // Ikony SVG (Lucide-like)
+        const Icons = {
+            Play: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+            Clock: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+            Users: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="19" cy="11" r="3"/></svg>,
+            Chart: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        };
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('landing');
+            const [testCode, setTestCode] = useState('');
+            const [currentTest, setCurrentTest] = useState(null);
+            const [participants, setParticipants] = useState([]);
+            const [results, setResults] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [studentName, setStudentName] = useState('');
+            const [error, setError] = useState(null);
+
+            useEffect(() => {
+                signInAnonymously(auth).catch(console.error);
+                return onAuthStateChanged(auth, setUser);
+            }, []);
+
+            useEffect(() => {
+                if (!user || !testCode) return;
+                const testRef = doc(db, 'artifacts', appId, 'public', 'data', 'tests', testCode);
+                const unsub = onSnapshot(testRef, snap => {
+                    if (snap.exists()) {
+                        const data = snap.data();
+                        setCurrentTest(data);
+                        if (view === 'student-lobby' && data.status === 'active') setView('student-quiz');
+                    }
+                });
+                return unsub;
+            }, [user, testCode, view]);
+
+            const generateTest = async (config) => {
+                setLoading(true);
+                const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+                const prompt = `Stwórz test JSON o temacie "${config.topic}". Liczba pytań: ${config.count}. Format: [{"question":"...","options":["A","B","C","D"],"correct":0}]`;
+                
+                try {
+                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${geminiApiKey}`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
+                    });
+                    const data = await res.json();
+                    const questions = JSON.parse(data.candidates[0].content.parts[0].text);
+
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tests', code), {
+                        code, topic: config.topic, questions, status: 'lobby', duration: config.duration * 60, teacherId: user.uid
+                    });
+                    setTestCode(code);
+                    setView('teacher-lobby');
+                } catch (e) { setError("Błąd AI"); }
+                setLoading(false);
+            };
+
+            const joinTest = async () => {
+                const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tests', testCode));
+                if (snap.exists()) {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tests', testCode, 'participants', user.uid), { name: studentName });
+                    setView('student-lobby');
+                } else setError("Zły kod");
+            };
+
+            return (
+                <div className="max-w-5xl mx-auto p-6">
+                    <header className="flex justify-between items-center mb-12">
+                        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('landing')}>
+                            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg shadow-indigo-200">E</div>
+                            <h1 className="text-2xl font-black text-slate-800 tracking-tight">EduAI</h1>
+                        </div>
+                    </header>
+
+                    {view === 'landing' && (
+                        <div className="grid md:grid-cols-2 gap-8">
+                            <button onClick={() => setView('teacher-setup')} className="glass p-8 rounded-3xl text-left border border-white hover:shadow-2xl transition-all group">
+                                <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-indigo-600 group-hover:text-white transition-colors"><Icons.Chart /></div>
+                                <h2 className="text-2xl font-bold mb-2">Panel Nauczyciela</h2>
+                                <p className="text-slate-500">Generuj testy za pomocą AI i zbieraj wyniki.</p>
+                            </button>
+                            <button onClick={() => setView('student-join')} className="glass p-8 rounded-3xl text-left border border-white hover:shadow-2xl transition-all group">
+                                <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-emerald-600 group-hover:text-white transition-colors"><Icons.Users /></div>
+                                <h2 className="text-2xl font-bold mb-2">Panel Ucznia</h2>
+                                <p className="text-slate-500">Dołącz do testu wpisując kod od nauczyciela.</p>
+                            </button>
+                        </div>
+                    )}
+
+                    {view === 'teacher-setup' && (
+                        <div className="glass p-8 rounded-3xl max-w-2xl mx-auto">
+                            <h2 className="text-2xl font-bold mb-8 flex items-center gap-3"><Icons.Clock /> Konfiguracja testu</h2>
+                            <div className="space-y-6">
+                                <input id="topic" type="text" placeholder="Temat testu..." className="w-full p-4 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />
+                                <div className="grid grid-cols-2 gap-4">
+                                    <input id="count" type="number" placeholder="Liczba pytań" defaultValue="5" className="p-4 rounded-xl border border-slate-200" />
+                                    <input id="time" type="number" placeholder="Czas (min)" defaultValue="10" className="p-4 rounded-xl border border-slate-200" />
+                                </div>
+                                <button 
+                                    onClick={() => generateTest({
+                                        topic: document.getElementById('topic').value,
+                                        count: document.getElementById('count').value,
+                                        duration: document.getElementById('time').value
+                                    })}
+                                    disabled={loading}
+                                    className="w-full bg-slate-900 text-white p-5 rounded-2xl font-bold text-lg hover:bg-slate-800 disabled:bg-slate-300 flex justify-center items-center gap-3"
+                                >
+                                    {loading ? "Generowanie..." : "Generuj Test AI"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {view === 'student-join' && (
+                        <div className="glass p-8 rounded-3xl max-w-md mx-auto text-center">
+                            <h2 className="text-2xl font-bold mb-8">Wpisz dane</h2>
+                            <input type="text" placeholder="Twoje imię" onChange={e => setStudentName(e.target.value)} className="w-full p-4 mb-4 rounded-xl border border-slate-200 outline-none" />
+                            <input type="text" placeholder="Kod sesji" onChange={e => setTestCode(e.target.value.toUpperCase())} className="w-full p-4 mb-8 rounded-xl border border-slate-200 text-center font-mono text-3xl font-black" />
+                            <button onClick={joinTest} className="w-full bg-emerald-600 text-white p-5 rounded-2xl font-bold text-lg">Dołącz</button>
+                        </div>
+                    )}
+
+                    {view === 'teacher-lobby' && (
+                        <div className="glass p-8 rounded-3xl">
+                            <div className="flex justify-between items-center mb-8">
+                                <div>
+                                    <h2 className="text-4xl font-black mb-2">{currentTest?.topic}</h2>
+                                    <p className="text-slate-400 font-mono text-xl">Kod: {testCode}</p>
+                                </div>
+                                <button 
+                                    onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tests', testCode), { status: 'active' })}
+                                    className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold flex items-center gap-2"
+                                >
+                                    <Icons.Play /> Start Testu
+                                </button>
+                            </div>
+                            <p className="text-slate-500 mb-4">Uczniowie w poczekalni...</p>
+                        </div>
+                    )}
+
+                    {view === 'student-lobby' && (
+                        <div className="glass p-12 rounded-3xl text-center">
+                            <div className="animate-bounce w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6"><Icons.Clock /></div>
+                            <h2 className="text-3xl font-bold mb-2">Cześć, {studentName}!</h2>
+                            <p className="text-slate-500">Poczekaj, aż nauczyciel rozpocznie test.</p>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
